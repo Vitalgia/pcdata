@@ -341,7 +341,7 @@ class PCData:
         if num_samples > 0:
             points = _resample(df[PCData.FIELD_XYZ], num_samples)
         else:
-            points = _resample(df[PCData.FIELD_XYZ], num_samples)
+            points = df[PCData.FIELD_XYZ]
         pc = open3d.geometry.PointCloud(open3d.utility.Vector3dVector(points))
         open3d.io.write_point_cloud(ofile, pc)
 
