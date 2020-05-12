@@ -152,6 +152,8 @@ shape: {self.shape}
         return length, width
 
     def present(self, fields):
+        if isinstance(fields, str):
+            fields = [fields]
         present_fields = self._data.keys()
         for field in fields:
             if field not in present_fields:
@@ -315,7 +317,7 @@ shape: {self.shape}
         colors = self._get_colors(color_channel)
         if colors is not None:
             pc.colors = open3d.open3d.utility.Vector3dVector(colors)
-        open3d.io.write_point_cloud(path, pc)
+        open3d.io.write_point_cloud(path, pc, write_ascii=True)
 
     def save_as_mesh(self, path, color_channel=_PCDataFields.FIELD_RGB):
         pc = open3d.geometry.TriangleMesh()
@@ -323,7 +325,7 @@ shape: {self.shape}
         colors = self._get_colors(color_channel)
         if colors is not None:
             pc.vertex_colors = open3d.open3d.utility.Vector3dVector(colors)
-        open3d.io.write_triangle_mesh(path, pc)
+        open3d.io.write_triangle_mesh(path, pc, write_ascii=True)
 
     def has_data(self):
         return self._data is not None
