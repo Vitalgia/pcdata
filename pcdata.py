@@ -1,8 +1,11 @@
 import os
+import sys
 import h5py
 import open3d
+import random
 import numpy as np
 import pandas as pd
+from matplotlib import cm
 
 
 def _resample(arr, num, return_indexes=False):
@@ -15,6 +18,18 @@ def _resample(arr, num, return_indexes=False):
     if return_indexes:
         return arr[ixs], ixs
     return arr[ixs]
+
+
+def _create_colors_list(size, seed, cmap_name='gist_rainbow'):
+    cmap = cm.get_cmap(cmap_name, size)
+    colors = [cmap(i)[:3] for i in range(size)]
+    if seed > -1:
+        rstate = random.getstate()
+        random.seed(seed)
+        random.shuffle(colors)
+        random.setstate(rstate)
+    return colors
+
 
 
 class _PCDataFields:
@@ -62,6 +77,12 @@ class PCData:
         'instances': _PCDataFields.FIELD_INSTANCE_ID,
     }
 
+    COLORS_LIST = None
+
+    @staticmethod
+    def reset_colors(size=24, seed=4):
+        PCData.COLORS_LIST = _create_colors_list(size, seed)
+
     @staticmethod
     def all_fields():
         return PCData.FIELDS
@@ -108,6 +129,14 @@ class PCData:
 
     def keys(self):
         return self._data.keys()
+
+    def __str__(self):
+        desc = f'''fields: {list(self.keys())}
+shape: {self.shape}
+'''
+        if self._path:
+            desc += f'source path: {self._path}'
+        return desc
 
     @property
     def shape(self):
@@ -203,7 +232,7 @@ class PCData:
             if len(self._data[k].shape) == 1:
                 self._data[k] = self._data[k].reshape((-1, 1))
 
-    def save(self, path=None):
+    def save(self, path=None, color_channel=_PCDataFields.FIELD_RGB):
         if path is None:
             path = self._path
         if path is None:
@@ -213,36 +242,88 @@ class PCData:
 
         ext = os.path.splitext(path)[1]
         if ext == '.h5':
-            with h5py.File(path, 'w') as fin:
-                for field in self.FIELDS:
-                    fin.create_dataset(field, data=self._data[field])
-        if ext == '.txt':
-            np.savetxt(path, self.data)
-        if ext == '.csv':
-            fields = [PCData.FIELD_XYZ, PCData.FIELD_XYZ, PCData.FIELD_XYZ]
-            subfields = ['x', 'y', 'z']
-            data = self._data[PCData.FIELD_XYZ]
-            if PCData.FIELD_RGB in self._data:
-                fields.extend([PCData.FIELD_RGB, PCData.FIELD_RGB, PCData.FIELD_RGB])
-                subfields.extend(['r', 'g', 'b'])
-                data = np.concatenate((data, self._data[PCData.FIELD_RGB]), axis=1)
-            if PCData.FIELD_XYZ_NORMALIZED in self._data:
-                fields.extend([PCData.FIELD_XYZ_NORMALIZED, PCData.FIELD_XYZ_NORMALIZED, PCData.FIELD_XYZ_NORMALIZED])
-                subfields.extend(['x', 'y', 'z'])
-                data = np.concatenate((data, self._data[PCData.FIELD_XYZ_NORMALIZED]), axis=1)
-            if PCData.FIELD_SEMANTIC_CLASS in self._data:
-                fields.append(PCData.FIELD_SEMANTIC_CLASS)
-                subfields.append(PCData.FIELD_SEMANTIC_CLASS)
-                data = np.concatenate((data, self._data[PCData.FIELD_SEMANTIC_CLASS]), axis=1)
-            if PCData.FIELD_INSTANCE_ID in self._data:
-                fields.append(PCData.FIELD_INSTANCE_ID)
-                subfields.append(PCData.FIELD_INSTANCE_ID)
-                data = np.concatenate((data, self._data[PCData.FIELD_INSTANCE_ID]), axis=1)
+            self._save_as_h5(path)
+        elif ext == '.txt':
+            self._save_as_txt(path)
+        elif ext == '.csv':
+            self._save_as_csv(path)
+        elif ext in ['.xyz', '.pts', '.ply', '.pcd', '.xyzrgb']:
+            self.save_as_pc(path, color_channel)
+        elif ext in ['.obj']:
+            self.save_as_mesh(path, color_channel)
 
-            titels = list(zip(fields, subfields))
-            index = pd.MultiIndex.from_tuples(titels, names=['field', 'subfield'])
-            df = pd.DataFrame(data=data, columns=index)
-            df.to_csv(path)
+    def _save_as_h5(self, path):
+        with h5py.File(path, 'w') as fin:
+            for field in self.FIELDS:
+                fin.create_dataset(field, data=self._data[field])
+
+    def _save_as_txt(self, path):
+        np.savetxt(path, self.data)
+
+    def _save_as_csv(self, path):
+        fields = [PCData.FIELD_XYZ, PCData.FIELD_XYZ, PCData.FIELD_XYZ]
+        subfields = ['x', 'y', 'z']
+        data = self._data[PCData.FIELD_XYZ]
+        if PCData.FIELD_RGB in self._data:
+            fields.extend([PCData.FIELD_RGB, PCData.FIELD_RGB, PCData.FIELD_RGB])
+            subfields.extend(['r', 'g', 'b'])
+            data = np.concatenate((data, self._data[PCData.FIELD_RGB]), axis=1)
+        if PCData.FIELD_XYZ_NORMALIZED in self._data:
+            fields.extend([PCData.FIELD_XYZ_NORMALIZED, PCData.FIELD_XYZ_NORMALIZED, PCData.FIELD_XYZ_NORMALIZED])
+            subfields.extend(['x', 'y', 'z'])
+            data = np.concatenate((data, self._data[PCData.FIELD_XYZ_NORMALIZED]), axis=1)
+        if PCData.FIELD_SEMANTIC_CLASS in self._data:
+            fields.append(PCData.FIELD_SEMANTIC_CLASS)
+            subfields.append(PCData.FIELD_SEMANTIC_CLASS)
+            data = np.concatenate((data, self._data[PCData.FIELD_SEMANTIC_CLASS]), axis=1)
+        if PCData.FIELD_INSTANCE_ID in self._data:
+            fields.append(PCData.FIELD_INSTANCE_ID)
+            subfields.append(PCData.FIELD_INSTANCE_ID)
+            data = np.concatenate((data, self._data[PCData.FIELD_INSTANCE_ID]), axis=1)
+
+        titels = list(zip(fields, subfields))
+        index = pd.MultiIndex.from_tuples(titels, names=['field', 'subfield'])
+        df = pd.DataFrame(data=data, columns=index)
+        df.to_csv(path)
+
+    @staticmethod
+    def _labels2rgb(labels):
+        ulabels, counts = np.unique(labels, return_counts=True)
+        ixs = np.argsort(counts)
+        ulabels = ulabels[ixs][::-1]
+        if PCData.COLORS_LIST is None or ulabels.shape[0] > len(PCData.COLORS_LIST) :
+            PCData.reset_colors(ulabels.shape[0] + 3)
+        colors = np.empty((labels.shape[0], 3))
+        for i, label in enumerate(ulabels):
+            colors[(labels == label).reshape(-1)] = PCData.COLORS_LIST[i]
+        return colors
+
+    def _get_colors(self, channel=_PCDataFields.FIELD_RGB):
+        colors = None
+        if channel is None or channel == PCData.FIELD_RGB:
+            if self.present(PCData.FIELD_RGB):
+                colors = self._data[PCData.FIELD_RGB]
+        if channel == PCData.FIELD_SEMANTIC_CLASS and self.present(PCData.FIELD_SEMANTIC_CLASS):
+            colors = self._labels2rgb(self._data[PCData.FIELD_SEMANTIC_CLASS])
+        if channel == PCData.FIELD_INSTANCE_ID and self.present(PCData.FIELD_INSTANCE_ID):
+            colors = self._labels2rgb(self._data[PCData.FIELD_INSTANCE_ID])
+        return colors
+
+    def save_as_pc(self, path, color_channel=_PCDataFields.FIELD_RGB):
+        pc = open3d.geometry.PointCloud()
+        pc.points = open3d.open3d.utility.Vector3dVector(self._data[PCData.FIELD_XYZ])
+        colors = self._get_colors(color_channel)
+        if colors is not None:
+            pc.colors = open3d.open3d.utility.Vector3dVector(colors)
+        open3d.io.write_point_cloud(path, pc)
+
+    def save_as_mesh(self, path, color_channel=_PCDataFields.FIELD_RGB):
+        pc = open3d.geometry.TriangleMesh()
+        pc.vertices = open3d.open3d.utility.Vector3dVector(self._data[PCData.FIELD_XYZ])
+        colors = self._get_colors(color_channel)
+        if colors is not None:
+            pc.vertex_colors = open3d.open3d.utility.Vector3dVector(colors)
+        open3d.io.write_triangle_mesh(path, pc)
 
     def has_data(self):
         return self._data is not None
@@ -297,6 +378,8 @@ class PCData:
         self._data[PCData.FIELD_INSTANCE_ID] = insts
 
     def make_instance_id_unique(self):
+        if self.instance_id_unique():
+            return
         labels = self._data[PCData.FIELD_SEMANTIC_CLASS].astype(np.int)
         insts = self._data[PCData.FIELD_INSTANCE_ID].astype(np.int)
         ulabels = np.unique(labels)
@@ -348,34 +431,46 @@ class PCData:
 
 if __name__ == '__main__':
     import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-i', '--input', required=True,
-                        help='input pc-data file path, supported formats: [h5, txt, csv]')
-    parser.add_argument('-o', '--output', required=True,
-                        help='output pc-data file path, supported formats: [h5, txt, csv]')
-    parser.add_argument('-r', '--resample', required=False, type=int,
-                        help='reduce number of points')
-    parser.add_argument('-z', '--make-instance-id-zerobased', required=False, action='store_true',
-                        help='make instance id labels zero-based')
-    parser.add_argument('-u', '--make-instance-id-unique', required=False, action='store_true',
-                        help='make instance id unique')
-    parser.add_argument('-s', '--strip-normalized-xyz', required=False, action='store_true',
-                        help='strip normalized xyz')
-    parser.add_argument('-a', '--add-normalized-xyz', required=False, action='store_true',
-                        help='add normalized xyz')
-    args = parser.parse_args()
+
+    def get_args():
+        parser = argparse.ArgumentParser()
+        parser.add_argument('-i', '--input', required=True,
+                            help='input pc-data file path, supported formats: [h5, txt, csv]')
+        parser.add_argument('-o', '--output', required=False,
+                            help='output pc-data file path, supported formats: [h5, txt, csv]')
+        parser.add_argument('-r', '--resample', required=False, type=int,
+                            help='reduce number of points')
+        parser.add_argument('-z', '--make-instance-id-zerobased', action='store_true',
+                            help='make instance id labels zero-based')
+        parser.add_argument('-u', '--make-instance-id-unique', action='store_true',
+                            help='make instance id unique')
+        parser.add_argument('-p', '--print-info', action='store_true',
+                            help='print point cloud info')
+        parser.add_argument('-s', '--strip-normalized-xyz', action='store_true',
+                            help='strip normalized xyz')
+        parser.add_argument('-a', '--add-normalized-xyz', action='store_true',
+                            help='add normalized xyz')
+        return parser.parse_args()
+
+
+    args = get_args()
     pcd = PCData(args.input)
+    if args.print_info:
+        print(pcd)
     if args.resample is not None and args.resample > 0:
         pcd.resample(args.resample)
+    if args.make_instance_id_zerobased and args.make_instance_id_unique:
+        print('warning: contradicting options: "make_instance_id_zerobased", "make_instance_id_unique"', file=sys.stderr)
     if args.make_instance_id_zerobased:
         pcd.make_instance_id_zerobased()
     if args.make_instance_id_unique:
         pcd.make_instance_id_unique()
     if args.strip_normalized_xyz and args.add_normalized_xyz:
-        print('warning striping and then adding normalized xyz')
+        print('warning: striping and then adding normalized xyz', file=sys.stderr)
     if args.strip_normalized_xyz:
         pcd.strip_normalized_xyz()
     if args.add_normalized_xyz:
         pcd.insert_normalized_xyz()
-    pcd.save(args.output)
+    if args.output:
+        pcd.save(args.output)
 
