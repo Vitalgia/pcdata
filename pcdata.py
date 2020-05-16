@@ -370,6 +370,12 @@ shape: {self.shape}
         except:
             pass
 
+    def add_jitter(self, maxval):
+        jitter = np.random.uniform(0, maxval, size=self._data[PCData.FIELD_XYZ].shape)
+        self._data[PCData.FIELD_XYZ] += jitter
+        if self.present(PCData.FIELD_XYZ_NORMALIZED):
+            self.insert_normalized_xyz(skip_exists=False)
+
     def insert_normalized_xyz(self, skip_exists=True):
         if skip_exists and PCData.FIELD_XYZ_NORMALIZED in self._data:
             return
@@ -449,7 +455,9 @@ if __name__ == '__main__':
         parser.add_argument('-o', '--output', required=False,
                             help='output pc-data file path, supported formats: [h5, txt, csv]')
         parser.add_argument('-r', '--resample', required=False, type=int,
-                            help='reduce number of points')
+                            help='shuffle and alter the number of points')
+        parser.add_argument('-j', '--jitter', default=-1., type=float,
+                            help='add a random shift to the points')
         parser.add_argument('-z', '--make-instance-id-zerobased', action='store_true',
                             help='make instance id labels zero-based')
         parser.add_argument('-u', '--make-instance-id-unique', action='store_true',
@@ -481,6 +489,8 @@ if __name__ == '__main__':
         pcd.strip_normalized_xyz()
     if args.add_normalized_xyz:
         pcd.insert_normalized_xyz()
+    if args.jitter > 0:
+        pcd.add_jitter(args.jitter)
     if args.output:
         pcd.save(args.output)
 
