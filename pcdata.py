@@ -114,9 +114,8 @@ class PCData:
                 self._fix_shape2d()
         elif ext == '.txt':
             self.data = np.loadtxt(path)
-        elif ext in ['.ply', '.obj', '.pcd']:
-            pc = open3d.io.read_point_cloud(path)
-            self.data = np.asarray(pc.points)
+        elif ext in ['.ply', '.pcd', '.xyz', '.xyzrgb', '.pts']:
+            self.data = PCData._load_pc_data(path)
         elif ext == '.csv':
             df = pd.read_csv(path, header=[0, 1])
             self._data = {}
@@ -126,6 +125,13 @@ class PCData:
                     self._data[field] = df[field].values
             self._fix_shape2d()
         self._path = path
+
+    @staticmethod
+    def _load_pc_data(path):
+        pc = open3d.io.read_point_cloud(path)
+        if pc.has_colors():
+            return np.concatenate((np.asarray(pc.points), np.asarray(pc.colors)), axis=1)
+        return np.asarray(pc.points)
 
     def keys(self):
         return self._data.keys()
@@ -202,6 +208,8 @@ shape: {self.shape}
         elif arr.shape[1] == 5:
             self._data[PCData.FIELD_SEMANTIC_CLASS] = arr[:, 3:4]
             self._data[PCData.FIELD_INSTANCE_ID] = arr[:, 4:5]
+        elif arr.shape[1] == 3:
+            pass
         else:
             raise Exception(f'unknown data shape: {arr.shape}')
 
